@@ -1,0 +1,329 @@
+name: Deploy-Databricks-NCC [${{ parameters.env }}] $(Date:yyyyMMdd).$(Rev:r)
+
+# ============================================================================
+# Deploys a Databricks Network Connectivity Configuration (NCC) to a workspace
+# and registers managed private endpoint rules for all PE-enabled resources
+# discovered in the target resource group:
+#   Storage Accounts (blob, dfs), Key Vaults (vault), SQL Servers (sqlServer),
+#   Data Factories (dataFactory), Cognitive Services / Azure OpenAI (account),
+#   Event Hub namespaces (namespace), Service Bus namespaces (namespace),
+#   Synapse workspaces (Sql, SqlOnDemand, Dev).
+# Pending Azure private endpoint connections are then approved automatically.
+#
+# Prerequisites
+# ─────────────
+# 1. An ADO service connection with Databricks Account Admin privileges.
+# 2. A variable group with the SAME NAME as that service connection containing:
+#      databricksAccountId – Databricks account UUID (top-right of Accounts Console)
+# 3. Optional: shared and environment .env files if you use file-based variable loading.
+# ============================================================================
+
+trigger: none   # on-demand only — run after the data-platform deployment
+
+parameters:
+  - name: env
+    displayName: Environment
+    type: string
+    default: dev
+    values:
+      - dev
+      - tst
+      - prd
+
+  - name: nccName
+    displayName: NCC Name (leave blank to use naming convention)
+    type: string
+    default: ''
+
+  - name: approvalWaitSeconds
+    displayName: Seconds to wait for PE connections to appear before approving
+    type: number
+    default: 300
+
+  - name: sharedEnvFile
+    displayName: Optional shared .env file path (relative to repo root)
+    type: string
+    default: 'config/shared.env'
+
+  - name: envFile
+    displayName: Optional environment .env file path (relative to repo root)
+    type: string
+    default: 'config/${{ parameters.env }}/.env'
+
+variables:
+  - name: ENVIRONMENT_NAME
+    value: ${{ parameters.env }}
+  - name: IS_PULL_REQUEST
+    value: 'false'
+  - name: SHARED_ENV_FILE
+    value: '$(System.DefaultWorkingDirectory)/${{ parameters.sharedEnvFile }}'
+  - name: ENV_FILE
+    value: '$(System.DefaultWorkingDirectory)/${{ parameters.envFile }}'
+
+  # Map environment to its service connection name.
+  - name: azureConnection
+    ${{ if eq(lower(parameters.env), 'dev') }}:
+      value: ''  # Set to your dev service connection name
+    ${{ elseif eq(lower(parameters.env), 'tst') }}:
+      value: ''
+    ${{ elseif eq(lower(parameters.env), 'prd') }}:
+      value: ''
+
+  # The Databricks admin service connection (and matching variable group).
+  # This is typically the account-level service connection, not the subscription one.
+  # Override this parameter to match your ADO service connection name.
+  - name: databricksAdminConnection
+    ${{ if eq(lower(parameters.env), 'dev') }}:
+      value: ''  # Set to your Databricks admin service connection name
+    ${{ elseif eq(lower(parameters.env), 'tst') }}:
+      value: ''
+    ${{ elseif eq(lower(parameters.env), 'prd') }}:
+      value: ''
+
+stages:
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Stage 1 — Deploy NCC and register private endpoint rules
+  # ──────────────────────────────────────────────────────────────────────────
+  - stage: Deploy_NCC
+    displayName: '🔗 Deploy Databricks NCC'
+    variables:
+      # Variable group named after the Databricks admin service connection.
+      # Must contain: databricksAccountId
+      - group: ${{ variables.databricksAdminConnection }}
+
+    jobs:
+      - deployment: DeployNCC
+        displayName: 'Deploy NCC to ${{ parameters.env }}'
+        environment: ${{ parameters.env }}
+        pool:
+          vmImage: ubuntu-latest
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  displayName: Checkout Repo
+
+                # ── Load environment variables from .env file ────────────────
+                - pwsh: |
+                    foreach ($f in @($env:SHARED_ENV_FILE, $env:ENV_FILE)) {
+                      if (-not (Test-Path $f)) {
+                        Write-Host "Skipping missing env file: $f"
+                        continue
+                      }
+                      (Get-Content -Path $f -Encoding UTF8) |
+                        ForEach-Object { $_ -replace '^([^=]+=)"(.*)"$', '$1$2' } |
+                        Out-File -FilePath $f -Encoding UTF8
+                    }
+                  displayName: Sanitise Environment Files
+
+                - pwsh: |
+                    Write-Host "Importing environment variables from shared.env then $env:ENV_FILE"
+                    foreach ($f in @($env:SHARED_ENV_FILE, $env:ENV_FILE)) {
+                      if (-not (Test-Path $f)) {
+                        Write-Host "Skipping missing env file: $f"
+                        continue
+                      }
+                      Get-Content -Path $f -Encoding UTF8 | ForEach-Object {
+                        $parts = ($_ -replace '"','').split('=', 2)
+                        if ($parts.Count -eq 2 -and $parts[0] -notmatch '^\s*#') {
+                          $name  = $parts[0].Trim()
+                          $value = $parts[1].Trim()
+                          Write-Host "##vso[task.setvariable variable=$name]$value"
+                          Write-Host "  Set $name"
+                        }
+                      }
+                    }
+                  displayName: Import Environment Variables
+
+                - pwsh: |
+                    $required = @(
+                      'LOCATION',
+                      'COMPANY_CODE',
+                      'WORKLOAD_CODE',
+                      'ENVIRONMENT_CODE',
+                      'SUBSCRIPTION_ID',
+                      'databricksAccountId'
+                    )
+
+                    $missing = @()
+                    foreach ($name in $required) {
+                      $value = [Environment]::GetEnvironmentVariable($name)
+                      if ([string]::IsNullOrWhiteSpace($value)) {
+                        $missing += $name
+                      }
+                    }
+
+                    if ($missing.Count -gt 0) {
+                      Write-Error ("Missing required variables: " + ($missing -join ', ') + ". Configure variable groups or provide .env files.")
+                      exit 1
+                    }
+
+                    Write-Host "Required variables validated."
+                  displayName: Validate Required Variables
+
+                # ── Compute resource group name from env vars ────────────────
+                # Mirrors the naming convention in config/custom-parameters/main.bicepparam:
+                #   rg-{companyCode}-{workloadCode}-{environmentCode}-{locationShort}-01
+                - task: AzurePowerShell@5
+                  displayName: Resolve Resource Group Name
+                  inputs:
+                    azureSubscription: ${{ variables.azureConnection }}
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    ScriptType: InlineScript
+                    Inline: |
+                      $location      = '$(LOCATION)'
+                      $locationShort = if ($location -eq 'northeurope') { 'eun' } else { $location.Substring(0, 3) }
+
+                      $rgName = 'rg-$(COMPANY_CODE)-$(WORKLOAD_CODE)-$(ENVIRONMENT_CODE)-{0}-01' -f $locationShort
+                      Write-Host "Resolved resource group: $rgName"
+                      Write-Host "##vso[task.setvariable variable=RESOURCE_GROUP_NAME]$rgName"
+
+                      # Resolve NCC name — use parameter if supplied, otherwise naming convention
+                      $nccParam = '${{ parameters.nccName }}'.Trim()
+                      $nccName  = if ($nccParam) {
+                          $nccParam
+                      } else {
+                          'ncc-$(COMPANY_CODE)-$(WORKLOAD_CODE)-$(ENVIRONMENT_CODE)-{0}-01' -f $locationShort
+                      }
+                      Write-Host "Resolved NCC name: $nccName"
+                      Write-Host "##vso[task.setvariable variable=NCC_NAME]$nccName"
+
+                # ── Deploy NCC and register PE rules (auto-discover resources) ──
+                - task: AzurePowerShell@5
+                  displayName: 'Deploy NCC and PE Rules'
+                  inputs:
+                    azureSubscription: ${{ variables.azureConnection }}
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    ScriptType: FilePath
+                    ScriptPath: 'pipeline-scripts/deployment/Deploy-DatabricksNCC.ps1'
+                    ScriptArguments: >
+                      -AccountID         '$(databricksAccountId)'
+                      -NccName           '$(NCC_NAME)'
+                      -Region            '$(LOCATION)'
+                      -SubscriptionId    '$(SUBSCRIPTION_ID)'
+                      -ResourceGroupName '$(RESOURCE_GROUP_NAME)'
+                      -AutoDiscover
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Stage 2 — Approve pending private endpoint connections
+  # Azure creates a pending PE connection on each target resource when the NCC
+  # rule is registered.  We wait for them to appear then approve them.
+  # ──────────────────────────────────────────────────────────────────────────
+  - stage: Approve_PEs
+    displayName: '✅ Approve Private Endpoint Connections'
+    dependsOn: Deploy_NCC
+    variables:
+      - group: ${{ variables.databricksAdminConnection }}
+
+    jobs:
+      - deployment: ApprovePEs
+        displayName: 'Approve PEs in ${{ parameters.env }}'
+        environment: ${{ parameters.env }}
+        pool:
+          vmImage: ubuntu-latest
+
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                  displayName: Checkout Repo
+
+                # Re-load env vars (each stage/job starts fresh)
+                - pwsh: |
+                    foreach ($f in @($env:SHARED_ENV_FILE, $env:ENV_FILE)) {
+                      if (-not (Test-Path $f)) {
+                        Write-Host "Skipping missing env file: $f"
+                        continue
+                      }
+                      (Get-Content -Path $f -Encoding UTF8) |
+                        ForEach-Object { $_ -replace '^([^=]+=)"(.*)"$', '$1$2' } |
+                        Out-File -FilePath $f -Encoding UTF8
+                    }
+                  displayName: Sanitise Environment Files
+
+                - pwsh: |
+                    foreach ($f in @($env:SHARED_ENV_FILE, $env:ENV_FILE)) {
+                      if (-not (Test-Path $f)) {
+                        Write-Host "Skipping missing env file: $f"
+                        continue
+                      }
+                      Get-Content -Path $f -Encoding UTF8 | ForEach-Object {
+                        $parts = ($_ -replace '"','').split('=', 2)
+                        if ($parts.Count -eq 2 -and $parts[0] -notmatch '^\s*#') {
+                          $name  = $parts[0].Trim()
+                          $value = $parts[1].Trim()
+                          Write-Host "##vso[task.setvariable variable=$name]$value"
+                        }
+                      }
+                    }
+                  displayName: Import Environment Variables
+
+                - pwsh: |
+                    $required = @(
+                      'LOCATION',
+                      'COMPANY_CODE',
+                      'WORKLOAD_CODE',
+                      'ENVIRONMENT_CODE',
+                      'SUBSCRIPTION_ID'
+                    )
+
+                    $missing = @()
+                    foreach ($name in $required) {
+                      $value = [Environment]::GetEnvironmentVariable($name)
+                      if ([string]::IsNullOrWhiteSpace($value)) {
+                        $missing += $name
+                      }
+                    }
+
+                    if ($missing.Count -gt 0) {
+                      Write-Error ("Missing required variables: " + ($missing -join ', ') + ". Configure variable groups or provide .env files.")
+                      exit 1
+                    }
+
+                    Write-Host "Required variables validated."
+                  displayName: Validate Required Variables
+
+                - task: AzurePowerShell@5
+                  displayName: Resolve Resource Group Name
+                  inputs:
+                    azureSubscription: ${{ variables.azureConnection }}
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    ScriptType: InlineScript
+                    Inline: |
+                      $location      = '$(LOCATION)'
+                      $locationShort = if ($location -eq 'northeurope') { 'eun' } else { $location.Substring(0, 3) }
+                      $rgName = 'rg-$(COMPANY_CODE)-$(WORKLOAD_CODE)-$(ENVIRONMENT_CODE)-{0}-01' -f $locationShort
+                      Write-Host "##vso[task.setvariable variable=RESOURCE_GROUP_NAME]$rgName"
+                      Write-Host "Resolved resource group: $rgName"
+
+                # ── Wait for pending PE connections to appear on the Azure resources ──
+                - pwsh: |
+                    $wait = ${{ parameters.approvalWaitSeconds }}
+                    Write-Host "Waiting $wait seconds for pending private endpoint connections to appear on Azure resources..."
+                    Start-Sleep -Seconds $wait
+                    Write-Host "Wait complete."
+                  displayName: 'Wait for PE Connections (${{ parameters.approvalWaitSeconds }}s)'
+
+                # ── Approve all pending PE connections on auto-discovered resources ──
+                # No DescriptionFilter: AutoDiscover already scopes to the right resources,
+                # and Databricks NCC PE connection names don't consistently contain 'databricks'.
+                - task: AzurePowerShell@5
+                  displayName: 'Approve Pending Private Endpoint Connections'
+                  inputs:
+                    azureSubscription: ${{ variables.azureConnection }}
+                    azurePowerShellVersion: LatestVersion
+                    pwsh: true
+                    ScriptType: FilePath
+                    ScriptPath: 'pipeline-scripts/deployment/Approve-DatabricksPrivateEndpoints.ps1'
+                    ScriptArguments: >
+                      -SubscriptionId    '$(SUBSCRIPTION_ID)'
+                      -ResourceGroupName '$(RESOURCE_GROUP_NAME)'
+                      -WhatIfEnabled     $false
+                      -AutoDiscover
