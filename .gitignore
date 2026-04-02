@@ -1,0 +1,57 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# PowerShell
+*.psd1.local
+*.ps1xml
+
+# Logs
+*.log
+logs/
+
+# Build and temp
+bin/
+obj/
+out/
+tmp/
+temp/
+*.tmp
+
+# Test results
+TestResults/
+coverage/
+
+# Secrets and environment files
+.env
+.env.*
+!*.env.template
+*.secret
+*.secrets.*
+*.pfx
+*.cer
+*.key
+
+# Azure and Databricks local artifacts
+.azure/
+.databricks/
+
+# Terraform local state and caches (if added later)
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraform.lock.hcl
+
+# Node (if docs tooling is added later)
+node_modules/
