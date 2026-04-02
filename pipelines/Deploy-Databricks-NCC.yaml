@@ -33,7 +33,7 @@ parameters:
   - name: nccName
     displayName: NCC Name (leave blank to use naming convention)
     type: string
-    default: ' '
+    default: ''
 
   - name: approvalWaitSeconds
     displayName: Seconds to wait for PE connections to appear before approving
@@ -114,7 +114,7 @@ stages:
                         continue
                       }
                       (Get-Content -Path $f -Encoding UTF8) |
-                        ForEach-Object { $_ -replace '"', '' } |
+                        ForEach-Object { $_ -replace '^([^=]+=)"(.*)"$', '$1$2' } |
                         Out-File -FilePath $f -Encoding UTF8
                     }
                   displayName: Sanitise Environment Files
@@ -242,7 +242,7 @@ stages:
                         continue
                       }
                       (Get-Content -Path $f -Encoding UTF8) |
-                        ForEach-Object { $_ -replace '"', '' } |
+                        ForEach-Object { $_ -replace '^([^=]+=)"(.*)"$', '$1$2' } |
                         Out-File -FilePath $f -Encoding UTF8
                     }
                   displayName: Sanitise Environment Files

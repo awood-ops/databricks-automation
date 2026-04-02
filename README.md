@@ -113,7 +113,7 @@ Creates or reuses an NCC, assigns it to a workspace, then registers managed priv
 | Service Bus namespace | `Get-AzServiceBusNamespace` | `namespace` |
 | Synapse workspace | `Get-AzSynapseWorkspace` | `Sql`, `SqlOnDemand`, `Dev` |
 
-Missing Az sub-modules are warned and skipped; they do not abort the run.
+Missing Az sub-modules are warned and skipped; they do not abort the run. Resource type discovery is guarded with `Get-Command` checks so that cmdlets from absent modules are never called.
 
 **Authentication:** Supports client credentials flow (service principal `clientId`/`clientSecret` → Databricks OIDC endpoint `https://accounts.azuredatabricks.net/oidc/accounts/{accountId}/v1/token`) or falls back to the current Az session token against the Databricks first-party resource (`2ff814a6-3304-4ab8-85cb-cd0e6f879c1d`).
 
@@ -126,7 +126,7 @@ Missing Az sub-modules are warned and skipped; they do not abort the run.
 Approves pending private endpoint connections surfaced on Azure resources after NCC rule registration. Supports the same manual / auto-discovery modes as `Deploy-DatabricksNCC.ps1`.
 
 Additional options:
-- `-DescriptionFilter` — regex applied to the PE connection description; useful when a resource hosts PE connections from multiple systems.
+- `-DescriptionFilter` — regex applied to the PE connection **name**; useful when a resource hosts PE connections from multiple systems.
 - `-WhatIfEnabled` — reports approvals without executing them. Automatically set to `$true` when the `IS_PULL_REQUEST` environment variable is truthy (pull request pipeline runs).
 
 ### 4. Azure DevOps Pipeline

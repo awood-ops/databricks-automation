@@ -13,7 +13,7 @@
          resource type, and resource name.
       2. Calls Get-AzPrivateEndpointConnection to list all private endpoint connections on
          that resource.
-      3. Filters for connections in the 'Pending' state that match the optional
+      3. Filters for connections in the 'Pending' state whose **name** matches the optional
          -DescriptionFilter pattern (useful when multiple systems create private endpoints
          against the same resource).
       4. Approves each matching connection using Approve-AzPrivateEndpointConnection.
@@ -209,43 +209,59 @@ if ($AutoDiscover) {
 
     $discovered = [System.Collections.Generic.List[hashtable]]::new()
 
-    foreach ($sa in (Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Storage: $($sa.StorageAccountName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'blob' })
-        $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'dfs'  })
-    }
-    foreach ($kv in (Get-AzKeyVault -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Key Vault: $($kv.VaultName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $kv.ResourceId; ResourceType = 'vault' })
-    }
-    foreach ($sql in (Get-AzSqlServer -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  SQL Server: $($sql.ServerName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sql.ResourceId; ResourceType = 'sqlServer' })
-    }
-    foreach ($adf in (Get-AzDataFactoryV2 -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Data Factory: $($adf.DataFactoryName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $adf.DataFactoryId; ResourceType = 'dataFactory' })
-    }
-    foreach ($cog in (Get-AzCognitiveServicesAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        $cogKind = if ($cog.PSObject.Properties['Kind']) { $cog.Kind } else { 'Unknown' }
-        $label = if ($cogKind -eq 'OpenAI') { "Azure OpenAI" } else { "Cognitive Services ($cogKind)" }
-        Write-Host "  $label`: $($cog.AccountName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $cog.Id; ResourceType = 'account' })
-    }
-    foreach ($eh in (Get-AzEventHubNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Event Hub: $($eh.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $eh.Id; ResourceType = 'namespace' })
-    }
-    foreach ($sb in (Get-AzServiceBusNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Service Bus: $($sb.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sb.Id; ResourceType = 'namespace' })
-    }
-    foreach ($syn in (Get-AzSynapseWorkspace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
-        Write-Host "  Synapse: $($syn.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Sql'         })
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'SqlOnDemand' })
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Dev'         })
-    }
+    if (Get-Command -Name 'Get-AzStorageAccount' -ErrorAction SilentlyContinue) {
+        foreach ($sa in (Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Storage: $($sa.StorageAccountName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'blob' })
+            $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'dfs'  })
+        }
+    } else { Write-Warning "Az.Storage module not available — Storage Accounts will be skipped." }
+    if (Get-Command -Name 'Get-AzKeyVault' -ErrorAction SilentlyContinue) {
+        foreach ($kv in (Get-AzKeyVault -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Key Vault: $($kv.VaultName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $kv.ResourceId; ResourceType = 'vault' })
+        }
+    } else { Write-Warning "Az.KeyVault module not available — Key Vaults will be skipped." }
+    if (Get-Command -Name 'Get-AzSqlServer' -ErrorAction SilentlyContinue) {
+        foreach ($sql in (Get-AzSqlServer -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  SQL Server: $($sql.ServerName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sql.ResourceId; ResourceType = 'sqlServer' })
+        }
+    } else { Write-Warning "Az.Sql module not available — SQL Servers will be skipped." }
+    if (Get-Command -Name 'Get-AzDataFactoryV2' -ErrorAction SilentlyContinue) {
+        foreach ($adf in (Get-AzDataFactoryV2 -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Data Factory: $($adf.DataFactoryName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $adf.DataFactoryId; ResourceType = 'dataFactory' })
+        }
+    } else { Write-Warning "Az.DataFactory module not available — Data Factories will be skipped." }
+    if (Get-Command -Name 'Get-AzCognitiveServicesAccount' -ErrorAction SilentlyContinue) {
+        foreach ($cog in (Get-AzCognitiveServicesAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            $cogKind = if ($cog.PSObject.Properties['Kind']) { $cog.Kind } else { 'Unknown' }
+            $label = if ($cogKind -eq 'OpenAI') { "Azure OpenAI" } else { "Cognitive Services ($cogKind)" }
+            Write-Host "  $label`: $($cog.AccountName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $cog.Id; ResourceType = 'account' })
+        }
+    } else { Write-Warning "Az.CognitiveServices module not available — Cognitive Services will be skipped." }
+    if (Get-Command -Name 'Get-AzEventHubNamespace' -ErrorAction SilentlyContinue) {
+        foreach ($eh in (Get-AzEventHubNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Event Hub: $($eh.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $eh.Id; ResourceType = 'namespace' })
+        }
+    } else { Write-Warning "Az.EventHub module not available — Event Hub namespaces will be skipped." }
+    if (Get-Command -Name 'Get-AzServiceBusNamespace' -ErrorAction SilentlyContinue) {
+        foreach ($sb in (Get-AzServiceBusNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Service Bus: $($sb.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sb.Id; ResourceType = 'namespace' })
+        }
+    } else { Write-Warning "Az.ServiceBus module not available — Service Bus namespaces will be skipped." }
+    if (Get-Command -Name 'Get-AzSynapseWorkspace' -ErrorAction SilentlyContinue) {
+        foreach ($syn in (Get-AzSynapseWorkspace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue)) {
+            Write-Host "  Synapse: $($syn.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Sql'         })
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'SqlOnDemand' })
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Dev'         })
+        }
+    } else { Write-Warning "Az.Synapse module not available — Synapse workspaces will be skipped." }
 
     $Resources = $discovered.ToArray()
     Write-Host "  Total resources to check: $($Resources.Count)" -ForegroundColor Green

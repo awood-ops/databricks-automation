@@ -52,7 +52,7 @@ Creates or reuses a Databricks Network Connectivity Configuration (NCC), assigns
 | Service Bus namespace | `Get-AzServiceBusNamespace` | `namespace` |
 | Synapse workspace | `Get-AzSynapseWorkspace` | `Sql`, `SqlOnDemand`, `Dev` |
 
-Missing Az sub-modules produce a warning and are skipped gracefully; they do not abort the run.
+Missing Az sub-modules produce a warning and are skipped gracefully via `Get-Command` guards; they do not abort the run.
 
 ### Usage
 
@@ -94,14 +94,14 @@ Approves pending private endpoint connections on Azure resources after NCC-manag
 | `AutoDiscover` | `switch` | Yes (AutoDiscover set) | Queries the target resource group for PE-eligible resources. |
 | `SubscriptionId` | `string` | Yes with AutoDiscover (or `$env:SUBSCRIPTION_ID`) | Azure subscription containing PE target resources. |
 | `ResourceGroupName` | `string` | Yes with AutoDiscover (or `$env:RESOURCE_GROUP_NAME`) | Resource group containing PE target resources. |
-| `DescriptionFilter` | `string` | No | Regex applied to the pending PE connection description. Use to narrow approvals when a resource hosts PE connections from multiple systems (e.g. `'databricks'`). |
+| `DescriptionFilter` | `string` | No | Regex applied to the pending PE connection **name**. Use to narrow approvals when a resource hosts PE connections from multiple systems (e.g. `'databricks'`). |
 | `WhatIfEnabled` | `bool` | No | When `$true`, reports pending connections without approving. Defaults to `$env:IS_PULL_REQUEST` — automatically `$true` on PR pipeline runs. |
 
 ### Execution Flow
 
 1. **Auto-discovery** (if `-AutoDiscover`) — same resource group query as `Deploy-DatabricksNCC.ps1`.
 2. **Per-resource PE connection query** — uses the appropriate Az cmdlet for each resource type to list pending private endpoint connections.
-3. **Description filter** — if `-DescriptionFilter` is set, connections whose description does not match the regex are skipped.
+3. **Name filter** — if `-DescriptionFilter` is set, connections whose **name** does not match the regex are skipped.
 4. **Approval** — calls the resource-type-specific Az approval cmdlet for each matching connection, or prints a WhatIf message if `WhatIfEnabled` is `$true`.
 
 ### Usage

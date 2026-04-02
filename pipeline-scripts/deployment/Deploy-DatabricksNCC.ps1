@@ -12,8 +12,9 @@
          creating it if absent.
 
     The service principal must be a Databricks Account Admin.
-    A variable group (or environment variables) named after the service connection must expose
-    'clientId' and 'clientSecret'.
+    A variable group (or environment variables) named after the service connection can expose
+    'CLIENT_ID' and 'CLIENT_SECRET'. If these are omitted, the script can use the token from
+    the current Az/Azure CLI session instead.
 
     When -AutoDiscover is specified the script queries Azure for all Storage Accounts
     (blob, dfs), Key Vaults (vault), SQL Servers (sqlServer), Data Factories (dataFactory),
@@ -105,7 +106,7 @@
 #>
 [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Manual')]
 param (
-    # Optional — auto-discovered from the Databricks Accounts API when omitted
+    # Optional when supplied via -AccountID or the DATABRICKS_ACCOUNT_ID environment variable
     [Parameter()]
     [string]$AccountID = "$($env:DATABRICKS_ACCOUNT_ID)",
 
@@ -241,66 +242,82 @@ if ($AutoDiscover) {
     $discovered = [System.Collections.Generic.List[hashtable]]::new()
 
     # ── Storage Accounts → blob + dfs ────────────────────────────────────────
-    $storageAccounts = Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($sa in $storageAccounts) {
-        Write-Host "  Storage: $($sa.StorageAccountName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'blob' })
-        $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'dfs'  })
-    }
+    if (Get-Command -Name 'Get-AzStorageAccount' -ErrorAction SilentlyContinue) {
+        $storageAccounts = Get-AzStorageAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($sa in $storageAccounts) {
+            Write-Host "  Storage: $($sa.StorageAccountName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'blob' })
+            $discovered.Add(@{ ResourceID = $sa.Id; ResourceType = 'dfs'  })
+        }
+    } else { Write-Warning "Az.Storage module not available — Storage Accounts will be skipped." }
 
     # ── Key Vaults → vault ───────────────────────────────────────────────────
-    $keyVaults = Get-AzKeyVault -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($kv in $keyVaults) {
-        Write-Host "  Key Vault: $($kv.VaultName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $kv.ResourceId; ResourceType = 'vault' })
-    }
+    if (Get-Command -Name 'Get-AzKeyVault' -ErrorAction SilentlyContinue) {
+        $keyVaults = Get-AzKeyVault -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($kv in $keyVaults) {
+            Write-Host "  Key Vault: $($kv.VaultName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $kv.ResourceId; ResourceType = 'vault' })
+        }
+    } else { Write-Warning "Az.KeyVault module not available — Key Vaults will be skipped." }
 
     # ── SQL Servers → sqlServer ──────────────────────────────────────────────
-    $sqlServers = Get-AzSqlServer -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($sql in $sqlServers) {
-        Write-Host "  SQL Server: $($sql.ServerName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sql.ResourceId; ResourceType = 'sqlServer' })
-    }
+    if (Get-Command -Name 'Get-AzSqlServer' -ErrorAction SilentlyContinue) {
+        $sqlServers = Get-AzSqlServer -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($sql in $sqlServers) {
+            Write-Host "  SQL Server: $($sql.ServerName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sql.ResourceId; ResourceType = 'sqlServer' })
+        }
+    } else { Write-Warning "Az.Sql module not available — SQL Servers will be skipped." }
 
     # ── Data Factories → dataFactory ─────────────────────────────────────────
-    $dataFactories = Get-AzDataFactoryV2 -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($adf in $dataFactories) {
-        Write-Host "  Data Factory: $($adf.DataFactoryName)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $adf.DataFactoryId; ResourceType = 'dataFactory' })
-    }
+    if (Get-Command -Name 'Get-AzDataFactoryV2' -ErrorAction SilentlyContinue) {
+        $dataFactories = Get-AzDataFactoryV2 -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($adf in $dataFactories) {
+            Write-Host "  Data Factory: $($adf.DataFactoryName)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $adf.DataFactoryId; ResourceType = 'dataFactory' })
+        }
+    } else { Write-Warning "Az.DataFactory module not available — Data Factories will be skipped." }
 
     # ── Cognitive Services / Azure OpenAI → account ───────────────────────────
-    $cogAccounts = Get-AzCognitiveServicesAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($cog in $cogAccounts) {
-        $cogKind    = try { $cog.Kind        } catch { try { $cog.AccountType } catch { 'Unknown' } }
-        $cogName    = try { $cog.AccountName } catch { try { $cog.Name        } catch { $cog.Id   } }
-        $label      = if ($cogKind -eq 'OpenAI') { "Azure OpenAI" } else { "Cognitive Services ($cogKind)" }
-        Write-Host "  $label`: $cogName" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $cog.Id; ResourceType = 'account' })
-    }
+    if (Get-Command -Name 'Get-AzCognitiveServicesAccount' -ErrorAction SilentlyContinue) {
+        $cogAccounts = Get-AzCognitiveServicesAccount -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($cog in $cogAccounts) {
+            $cogKind    = try { $cog.Kind        } catch { try { $cog.AccountType } catch { 'Unknown' } }
+            $cogName    = try { $cog.AccountName } catch { try { $cog.Name        } catch { $cog.Id   } }
+            $label      = if ($cogKind -eq 'OpenAI') { "Azure OpenAI" } else { "Cognitive Services ($cogKind)" }
+            Write-Host "  $label`: $cogName" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $cog.Id; ResourceType = 'account' })
+        }
+    } else { Write-Warning "Az.CognitiveServices module not available — Cognitive Services will be skipped." }
 
     # ── Event Hub namespaces → namespace ──────────────────────────────────────
-    $eventHubs = Get-AzEventHubNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($eh in $eventHubs) {
-        Write-Host "  Event Hub: $($eh.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $eh.Id; ResourceType = 'namespace' })
-    }
+    if (Get-Command -Name 'Get-AzEventHubNamespace' -ErrorAction SilentlyContinue) {
+        $eventHubs = Get-AzEventHubNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($eh in $eventHubs) {
+            Write-Host "  Event Hub: $($eh.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $eh.Id; ResourceType = 'namespace' })
+        }
+    } else { Write-Warning "Az.EventHub module not available — Event Hub namespaces will be skipped." }
 
     # ── Service Bus namespaces → namespace ────────────────────────────────────
-    $serviceBusNs = Get-AzServiceBusNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($sb in $serviceBusNs) {
-        Write-Host "  Service Bus: $($sb.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $sb.Id; ResourceType = 'namespace' })
-    }
+    if (Get-Command -Name 'Get-AzServiceBusNamespace' -ErrorAction SilentlyContinue) {
+        $serviceBusNs = Get-AzServiceBusNamespace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($sb in $serviceBusNs) {
+            Write-Host "  Service Bus: $($sb.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $sb.Id; ResourceType = 'namespace' })
+        }
+    } else { Write-Warning "Az.ServiceBus module not available — Service Bus namespaces will be skipped." }
 
     # ── Synapse workspaces → Sql, SqlOnDemand, Dev ────────────────────────────
-    $synapseWorkspaces = Get-AzSynapseWorkspace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
-    foreach ($syn in $synapseWorkspaces) {
-        Write-Host "  Synapse: $($syn.Name)" -ForegroundColor Gray
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Sql'          })
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'SqlOnDemand'  })
-        $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Dev'          })
-    }
+    if (Get-Command -Name 'Get-AzSynapseWorkspace' -ErrorAction SilentlyContinue) {
+        $synapseWorkspaces = Get-AzSynapseWorkspace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue
+        foreach ($syn in $synapseWorkspaces) {
+            Write-Host "  Synapse: $($syn.Name)" -ForegroundColor Gray
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Sql'          })
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'SqlOnDemand'  })
+            $discovered.Add(@{ ResourceID = $syn.Id; ResourceType = 'Dev'          })
+        }
+    } else { Write-Warning "Az.Synapse module not available — Synapse workspaces will be skipped." }
 
     $Resources = $discovered.ToArray()
     Write-Host "  Total PE rules to register: $($Resources.Count)" -ForegroundColor Green
@@ -308,6 +325,9 @@ if ($AutoDiscover) {
     # ── Resolve Databricks workspace ID if not supplied ───────────────────────
     if (-not $WorkspaceID) {
         Write-Host '  Resolving Databricks workspace ID from deployed workspace...' -ForegroundColor Gray
+        if (-not (Get-Command -Name 'Get-AzDatabricksWorkspace' -ErrorAction SilentlyContinue)) {
+            throw "Az.Databricks module is required to auto-resolve WorkspaceID. Install it or supply -WorkspaceID explicitly."
+        }
         $dbwResource = Get-AzDatabricksWorkspace -ResourceGroupName $ResourceGroupName -ErrorAction SilentlyContinue |
             Select-Object -First 1
         if ($null -eq $dbwResource) {
@@ -390,7 +410,7 @@ else {
     }
     # Az 12+ returns Token as SecureString — convert to plain text if needed
     $dbToken = if ($rawToken -is [System.Security.SecureString]) {
-        $rawToken | ConvertFrom-SecureString -AsPlainText
+        [System.Net.NetworkCredential]::new('', $rawToken).Password
     } else {
         $rawToken
     }

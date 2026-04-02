@@ -4,8 +4,7 @@
 
 .DESCRIPTION
     This script uses the Databricks Accounts SCIM API to:
-      1. Obtain an OAuth2 token using a service principal (client credentials flow) or the
-         current Az session.
+      1. Obtain an OAuth2 token using the current Az session (Get-AzAccessToken).
       2. Look up the target principal in the Databricks account by Entra ID object ID.
          If the user/service principal does not yet exist in the Databricks account it is
          created (provisioned).
@@ -22,7 +21,10 @@
     Falls back to the DATABRICKS_ACCOUNT_ID environment variable.
 
 .PARAMETER PrincipalObjectId
-    The Entra ID object ID of the user or service principal to promote.
+    For -PrincipalType User: the Entra ID object ID of the user to promote.
+    For -PrincipalType ServicePrincipal: the Entra ID application (client) ID of the service
+    principal. Note: this is the applicationId used by the Databricks SCIM API, NOT the
+    enterprise application object ID found in Entra ID → Enterprise Applications.
     Mutually exclusive with -UserPrincipalName.
 
 .PARAMETER UserPrincipalName
@@ -83,7 +85,7 @@ param (
     [string]$PrincipalType = 'User',
 
     [Parameter()]
-    [bool]$WhatIfEnabled = [System.Convert]::ToBoolean($($env:IS_PULL_REQUEST ?? 'false'))
+    [bool]$WhatIfEnabled = [System.Convert]::ToBoolean($(if ($env:IS_PULL_REQUEST) { $env:IS_PULL_REQUEST } else { 'false' }))
 )
 
 Set-StrictMode -Version Latest
@@ -154,7 +156,7 @@ catch {
     $rawToken = (Get-AzAccessToken -Resource '2ff814a6-3304-4ab8-85cb-cd0e6f879c1d' -ErrorAction Stop).Token
 }
 $dbToken = if ($rawToken -is [System.Security.SecureString]) {
-    $rawToken | ConvertFrom-SecureString -AsPlainText
+    [System.Net.NetworkCredential]::new('', $rawToken).Password
 } else {
     $rawToken
 }
@@ -176,7 +178,7 @@ if ($PSCmdlet.ParameterSetName -eq 'ByUPN') {
         $rawGraphToken = (Get-AzAccessToken -Resource 'https://graph.microsoft.com/' -ErrorAction Stop).Token
     }
     $graphToken = if ($rawGraphToken -is [System.Security.SecureString]) {
-        $rawGraphToken | ConvertFrom-SecureString -AsPlainText
+        [System.Net.NetworkCredential]::new('', $rawGraphToken).Password
     } else {
         $rawGraphToken
     }
@@ -262,7 +264,7 @@ else {
             $rawGraphToken = (Get-AzAccessToken -Resource 'https://graph.microsoft.com/' -ErrorAction Stop).Token
         }
         $graphToken = if ($rawGraphToken -is [System.Security.SecureString]) {
-            $rawGraphToken | ConvertFrom-SecureString -AsPlainText
+            [System.Net.NetworkCredential]::new('', $rawGraphToken).Password
         } else {
             $rawGraphToken
         }
@@ -360,7 +362,7 @@ Write-Host "`nNew-DatabricksAccountAdmin complete." -ForegroundColor Cyan
 if ($PrincipalType -eq 'ServicePrincipal') {
     Write-Host "Principal (SP)  : $PrincipalObjectId" -ForegroundColor Cyan
 } else {
-    Write-Host "Principal (User): $($UserPrincipalName ?? $PrincipalObjectId)" -ForegroundColor Cyan
+    Write-Host "Principal (User): $(if ($UserPrincipalName) { $UserPrincipalName } else { $PrincipalObjectId })" -ForegroundColor Cyan
 }
 Write-Host "Databricks ID   : $databricksId" -ForegroundColor Cyan
 Write-Host "Role            : account_admin" -ForegroundColor Cyan
