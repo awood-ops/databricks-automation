@@ -15,7 +15,7 @@ Creates or reuses a Databricks Network Connectivity Configuration (NCC), assigns
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `AccountID` | `string` | Yes (or `$env:DATABRICKS_ACCOUNT_ID`) | Databricks account UUID. |
-| `NccName` | `string` | Yes | Display name for the NCC. Existing NCCs with this name are reused. |
+| `NccName` | `string` | Yes | Display name for the NCC. Existing NCCs with this name are reused; the script validates the found NCC is in the correct region before proceeding. |
 | `WorkspaceID` | `string` | Yes (Manual); optional (AutoDiscover) | Numeric Databricks workspace ID from the workspace URL (`adb-<WorkspaceID>.<random>.azuredatabricks.net`). Resolved automatically from the deployed workspace resource when `-AutoDiscover` is set. |
 | `ClientId` | `string` | No (or `$env:CLIENT_ID`) | Entra ID application (client) ID for client credentials auth. When omitted, falls back to the current Az session. |
 | `ClientSecret` | `string` | No (or `$env:CLIENT_SECRET`) | Client secret for the service principal. Required when `ClientId` is supplied. |

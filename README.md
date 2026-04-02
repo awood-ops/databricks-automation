@@ -2,6 +2,37 @@
 
 Production-grade PowerShell automation for Azure Databricks account administration and Network Connectivity Configuration (NCC) rollout. Targets the Databricks Accounts REST API (`api/2.0`) and Accounts SCIM API (`/scim/v2`), with Azure DevOps pipeline orchestration.
 
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Azure DevOps Pipeline                                          │
+│                                                                 │
+│  Stage 1: Deploy_NCC          Stage 2: Approve_PEs             │
+│  ┌────────────────────┐       ┌────────────────────┐           │
+│  │ Load .env files    │       │ Load .env files    │           │
+│  │ Resolve RG / NCC   │──────▶│ Wait N seconds     │           │
+│  │ Deploy-DatabricksNCC│      │ Approve-Databricks │           │
+│  └────────┬───────────┘       └────────┬───────────┘           │
+└───────────┼────────────────────────────┼─────────────────────-─┘
+            │                            │
+            ▼                            ▼
+┌───────────────────────┐    ┌───────────────────────────────────┐
+│  Databricks Accounts  │    │  Azure Resource Manager           │
+│  REST API             │    │                                   │
+│                       │    │  For each PE target resource:     │
+│  1. Create/reuse NCC  │    │  - Storage (blob, dfs)            │
+│  2. Assign to         │    │  - Key Vault                      │
+│     workspace         │    │  - SQL Server                     │
+│  3. Register PE rules │    │  - Data Factory                   │
+│                       │    │  - Cognitive Services             │
+│  Auth: OIDC client    │    │  - Event Hub / Service Bus        │
+│  credentials or       │    │  - Synapse                        │
+│  Az session token     │    │                                   │
+└───────────────────────┘    │  Approve pending PE connections   │
+                             └───────────────────────────────────┘
+```
+
 ## What This Repo Covers
 
 - Account-level admin assignment for users or service principals via the Databricks Accounts SCIM API.
@@ -247,7 +278,7 @@ $resources = @(
 - **Idempotency:** NCC creation, workspace assignment, and PE rule registration all follow a create-or-reuse pattern — re-running against the same environment is safe.
 - **Fail-fast preflight:** Scripts validate PowerShell version, Az module availability, Az login state, and required parameter presence before any API calls.
 - **WhatIf / PR safety:** `Approve-DatabricksPrivateEndpoints.ps1` reads `$env:IS_PULL_REQUEST` to auto-enable WhatIf on pull request pipeline runs. Pass `-WhatIfEnabled $true` to activate manually.
-- **NCC region constraint:** The NCC region must match the Databricks workspace region. Default is `uksouth`; override with `-Region`.
+- **NCC region constraint:** The NCC region must exactly match the Databricks workspace region — mismatches cause a hard API error. Default is `uksouth`; always override with `-Region` if your workspace is in a different region (e.g. `westeurope`, `eastus`). The region must be specified consistently across all scripts and the `.env` file.
 - **Az 12+ compatibility:** `Get-AzAccessToken` returns a `SecureString` in Az 12+. All token acquisition paths handle both `SecureString` and plain `string` returns.
 
 ## Security Considerations
@@ -268,9 +299,17 @@ $resources = @(
 | Graph lookup failure for UPN | Wrong tenant context or missing `Directory.Read.All` | Run `Get-AzContext` to verify tenant; check SP Graph API permissions |
 | NCC region mismatch error | `-Region` does not match workspace region | Set `-Region` to the workspace's Azure region (e.g. `uksouth`, `westeurope`) |
 
+## Limitations
+
+- **Auto-discovery is resource-group scoped.** All PE targets and the Databricks workspace must be in the same resource group. Cross-group or cross-subscription topologies require the manual `-Resources` parameter set.
+- **Supported resource types only.** Auto-discovery covers the resource types listed in the Components section. Resources of other types (e.g. Azure Container Registry, Azure Cache for Redis) must be supplied manually via `-Resources`.
+- **One NCC per workspace.** The scripts manage a single NCC per run. Multiple NCCs per workspace are not currently automated.
+- **Single region per run.** NCC and workspace must share the same region. Deploying across multiple regions requires separate pipeline runs with different `-Region` values.
+- **Az module dependency.** Auto-discovery requires Az PowerShell sub-modules. Missing modules produce a warning and their resource types are skipped — they do not cause a failure, but those resources will not be registered.
+
 ## Additional Documentation
 
-- Script reference: `scripts/README.md`
-- Deployment script reference: `pipeline-scripts/deployment/README.md`
-- Pipeline reference: `pipelines/README.md`
-- Release history: `CHANGELOG.md`
+- [Script reference](./scripts/README.md)
+- [Deployment script reference](./pipeline-scripts/deployment/README.md)
+- [Pipeline reference](./pipelines/README.md)
+- [Release history](./CHANGELOG.md)

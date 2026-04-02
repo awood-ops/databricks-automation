@@ -47,6 +47,25 @@ Two sets of variables must be configured before first run:
 
 `.env` files use `KEY=VALUE` format. Double-quotes are stripped by the sanitise step. Lines beginning with `#` are ignored.
 
+**Example `config/shared.env`:**
+
+```env
+# Shared variables across all environments
+COMPANY_CODE=contoso
+WORKLOAD_CODE=dap
+```
+
+**Example `config/dev/.env`:**
+
+```env
+# Environment-specific variables for dev
+LOCATION=uksouth
+ENVIRONMENT_CODE=dev
+SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000000
+```
+
+> **Note:** The `LOCATION` value must match the Azure region of your Databricks workspace exactly. This value is also used as the NCC region — a mismatch will cause a hard API error. See [Design Notes](../README.md#design-notes) in the root README.
+
 ### Stage Detail
 
 #### Stage 1 — `Deploy_NCC`
@@ -79,7 +98,7 @@ ncc-{COMPANY_CODE}-{WORKLOAD_CODE}-{ENVIRONMENT_CODE}-{locationShort}-01
 ```
 
 `locationShort` mapping:
-- `northeurope` → `eun`
+- `northeurope` → `eun` (special case: Azure's `northeurope` abbreviation is `ne`, which conflicts with common naming conventions — `eun` avoids the collision and is used by convention in this project)
 - All other regions → first 3 characters (e.g. `uksouth` → `uks`, `westeurope` → `wes`)
 
 ### First-Run Checklist
